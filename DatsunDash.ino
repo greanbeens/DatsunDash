@@ -6,21 +6,25 @@ CANSAME5x CANS;
 int canRecieved;
 int can_id;
 
-int16_t motorRpm;
-int16_t motorTemp;
-int16_t inverterTemp;
+bool firstScan = false;
+
+float motorRpm;
+float motorTemp;
+float inverterTemp;
 int16_t packSOC;
 
 float minCellVoltage;
 int maxCellTemp;
 int16_t packVoltage;
-int16_t packCurrent;
 
 float ceiling;
 bool update = false;
 
 unsigned long oldMillis = 0;
 unsigned long oldMs = 0;
+unsigned long longMs = 0;
+bool longMsBool = true;
+bool oldMsBool = true;
 
 bool DispVoltage = false;
 bool flashRed = false;
@@ -32,8 +36,8 @@ float battV = 0;
 #define MIN_CELL_VOLTAGE 0x0716
 #define SOC 0x712
 #define PACK_VOLTAGE 0x06D0
-#define MOTORTEMPS 0x0401
-#define MOTORRPM 0x0402
+#define MOTORTEMPS 0x06a0
+#define MOTORRPM 0x06a1
 
 #include <SPI.h>
 #include "Adafruit_GFX.h"
@@ -117,13 +121,13 @@ void loop() {
         if (packetSize) {
           minCellVoltage = (float)((buf[3]) + (buf[2] * 256))/10000;
           maxCellTemp = (buf[0]);
-          Serial.print("minCellVoltage: ");
-          Serial.println(minCellVoltage);
+          //Serial.print("minCellVoltage: ");
+          //Serial.println(minCellVoltage);
          //Serial.println(buf[3], HEX);
          //Serial.println(buf[2], HEX);
           
-          Serial.print("max cell temp: ");
-          Serial.println(maxCellTemp);
+          //Serial.print("max cell temp: ");
+          //Serial.println(maxCellTemp);
           updateScreen(TEXT_1_X, TEXT_1_Y, maxCellTemp, 3, "C", false);
           updateScreen(TEXT_3_X, TEXT_3_Y, minCellVoltage, 3, "V", true);
           
@@ -133,7 +137,7 @@ void loop() {
       case PACK_VOLTAGE:
         if (packetSize) {
           packVoltage = ((buf[3]*256) + buf[2]/10000);
-          packCurrent = (buf[1]*256) + buf[0];
+          //packCurrent = (buf[1]*256) + buf[0];
           //Serial.println(packVoltage);
           //Serial.println(packCurrent);
         }
@@ -141,9 +145,22 @@ void loop() {
 
      case MOTORRPM:
         if (packetSize) {
+
+          Serial.print("CAN 401: ");
+         int dataLength = sizeof(buf);
+          // Loop through and print each byte
+          for (int i = 0; i < dataLength; i++) {
+            char hexBuffer[3]; // 2 chars for hex + 1 for null-terminator
+            sprintf(hexBuffer, "%02X", buf[i]); 
+            Serial.print(hexBuffer);
+            Serial.print(" "); // Add a space descriptor for readability
+          }
+          Serial.println("");
           motorRpm =( buf[3]*256 )+ buf[2];
           updateScreen(TEXT_6_X, TEXT_6_Y, motorRpm, 4, "rpm", false);
           //Serial.println(motorRpm);
+
+          
         }
       break;
 
@@ -155,10 +172,33 @@ void loop() {
 
       case MOTORTEMPS:
         if(packetSize){
-          motorTemp = buf[0];
-          inverterTemp = buf[1];
-          updateScreen(TEXT_4_X, TEXT_4_Y, motorTemp, 2, "%", false);
-          updateScreen(TEXT_5_X, TEXT_5_Y, inverterTemp, 2, "%", false);
+
+          // motor controller sends out CANopen hearbeat, maybe? Ignore these (terrible and hardcoded, sorry!)
+          if(buf[7] == 0 && buf[0] < 0xFC){
+          /*  char hexBuffer2[12];
+              Serial.print("CAN ");
+              sprintf(hexBuffer2, "%04X", MOTORTEMPS);
+              Serial.print(hexBuffer2);
+              Serial.print(": ");
+             int dataLength = sizeof(buf);
+              // Loop through and print each byte
+              for (int i = 0; i < dataLength; i++) {
+                char hexBuffer[3]; // 2 chars for hex + 1 for null-terminator
+                sprintf(hexBuffer, "%04d", buf[i]); 
+                Serial.print(hexBuffer);
+                Serial.print(" "); // Add a space descriptor for readability
+              }
+            Serial.println("");*/
+            
+            motorTemp = (float)buf[0]-40;
+            inverterTemp =(float) buf[2]-40;
+            updateScreen(TEXT_4_X, TEXT_4_Y, (motorTemp), 3, "C", false);
+            updateScreen(TEXT_5_X, TEXT_5_Y, (inverterTemp), 3, "C", false);
+            motorRpm =( buf[5]*256 )+ buf[4];
+            if(motorRpm < 15000){ //the motor controller sends out an FF FF every once in a while, for fun
+              updateScreen(TEXT_6_X, TEXT_6_Y, motorRpm, 4, "rpm", false);
+            }
+          }
         }
 
       default:
@@ -176,26 +216,67 @@ void loop() {
    analogWrite(A1, (maxCellTemp*conversion/100));
  }
 
-  if((millis() - oldMs) > 2700){
+  if((millis() - oldMs) > 3000){
     oldMs = millis();
     flashRed = !flashRed;
     update = true;
   }
 
   if(update && maxCellTemp > 50){
-    update = false;
-    oldFlashRed = flashRed;
-    if (flashRed){
-      tft.fillScreen(HX8357_RED);    // fill black
-    } else {
-      tft.fillScreen(HX8357_BLACK);    // fill black
-    }
-      screenSetup();
-      updateScreen(TEXT_1_X, TEXT_1_Y, maxCellTemp, 3, "C", false);
-      updateScreen(TEXT_2_X, TEXT_2_Y, packSOC, 3, "%", false);
-      updateScreen(TEXT_3_X, TEXT_3_Y, minCellVoltage, 3, "V", true);
-      updateScreen(TEXT_6_X, TEXT_6_Y, motorRpm, 4, "rpm", false);
+      update = false;
+      oldFlashRed = flashRed;
+      if (flashRed){
+        tft.fillScreen(HX8357_RED);    // fill black
+      } else {
+        tft.fillScreen(HX8357_BLACK);    // fill black
+      }
+        screenSetup();
+        updateScreen(TEXT_1_X, TEXT_1_Y, maxCellTemp, 3, "C", false);
+        updateScreen(TEXT_2_X, TEXT_2_Y, packSOC, 3, "%", false);
+        updateScreen(TEXT_3_X, TEXT_3_Y, minCellVoltage, 3, "V", true);
+        updateScreen(TEXT_4_X, TEXT_4_Y, motorTemp, 3, "C", false);
+        updateScreen(TEXT_5_X, TEXT_5_Y, inverterTemp, 3, "C", false);
+        updateScreen(TEXT_6_X, TEXT_6_Y, motorRpm, 4, "rpm", false);
   }
+
+  if((maxCellTemp > 30) && longMsBool){ //
+    if (not firstScan){
+      longMs = millis();
+    }
+     firstScan = true;
+    
+    if (millis() - longMs > 30000){
+      longMsBool = false;
+    }
+
+      if (longMsBool && oldMsBool){
+        oldMsBool = false;
+        tft.fillScreen(HX8357_BLUE);    // fill blue
+        tft.setTextSize(10);
+        tft.setCursor(10, 10);
+        tft.setTextColor(HX8357_WHITE, HX8357_BLUE);
+        tft.print("TURN ON\nCOOLING\nPUMP");
+        updateScreen(TEXT_1_X, TEXT_1_Y, maxCellTemp, 3, "C", false);
+        updateScreen(TEXT_2_X, TEXT_2_Y, packSOC, 3, "%", false);
+        updateScreen(TEXT_3_X, TEXT_3_Y, minCellVoltage, 3, "V", true);
+        updateScreen(TEXT_4_X, TEXT_4_Y, motorTemp, 3, "C", false);
+        updateScreen(TEXT_5_X, TEXT_5_Y, inverterTemp, 3, "C", false);
+        updateScreen(TEXT_6_X, TEXT_6_Y, motorRpm, 4, "rpm", false);
+      } else if (not longMsBool) {
+        tft.fillScreen(HX8357_BLACK);    // fill black
+        screenSetup();
+        updateScreen(TEXT_1_X, TEXT_1_Y, maxCellTemp, 3, "C", false);
+        updateScreen(TEXT_2_X, TEXT_2_Y, packSOC, 3, "%", false);
+        updateScreen(TEXT_3_X, TEXT_3_Y, minCellVoltage, 3, "V", true);
+        updateScreen(TEXT_4_X, TEXT_4_Y, motorTemp, 3, "C", false);
+        updateScreen(TEXT_5_X, TEXT_5_Y, inverterTemp, 3, "C", false);
+        updateScreen(TEXT_6_X, TEXT_6_Y, motorRpm, 4, "rpm", false);
+      }
+        
+  }
+
+
+  
 }
 
 #include "header.h"
@@ -234,10 +315,10 @@ void updateScreen(int x, int y, float value, int digits, String unit, bool isFlo
   if (not isFloat){
     switch (digits) {
       case 1: sprintf(str1, "%1.0f", value); break;
-      case 2: sprintf(str1, "%2d", value); break;
+      case 2: sprintf(str1, "%2.0f", value); break;
       case 3: sprintf(str1, "%3.0f", value); break;
       case 4: sprintf(str1, "%4.0f", value); break;
-      case 5: sprintf(str1, "%5d", value); break;
+      case 5: sprintf(str1, "%5.0f", value); break;
       default: sprintf(str1, "fail bruh"); break;
     }
    }    else {
